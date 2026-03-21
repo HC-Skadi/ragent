@@ -15,34 +15,31 @@
  * limitations under the License.
  */
 
-package com.nageoffer.ai.ragent.rag.controller;
+package com.nageoffer.ai.ragent.rag.mq;
 
-import com.nageoffer.ai.ragent.rag.controller.request.MessageFeedbackRequest;
-import com.nageoffer.ai.ragent.framework.convention.Result;
-import com.nageoffer.ai.ragent.framework.web.Results;
+import com.nageoffer.ai.ragent.framework.mq.MessageWrapper;
+import com.nageoffer.ai.ragent.framework.mq.consumer.MQConsumer;
+import com.nageoffer.ai.ragent.framework.mq.consumer.MessageQueueConsumer;
+import com.nageoffer.ai.ragent.rag.mq.event.MessageFeedbackEvent;
 import com.nageoffer.ai.ragent.rag.service.MessageFeedbackService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RestController;
+import lombok.extern.slf4j.Slf4j;
 
 /**
- * 会话消息反馈控制器
+ * 消息反馈 MQ 消费者，负责将点赞/点踩事件异步持久化到数据库
  */
-@RestController
+@Slf4j
 @RequiredArgsConstructor
-public class MessageFeedbackController {
+@MQConsumer(topic = MessageFeedbackProducer.TOPIC, consumerGroup = "message-feedback-consumer-group")
+public class MessageFeedbackConsumer implements MessageQueueConsumer<MessageFeedbackEvent> {
 
     private final MessageFeedbackService feedbackService;
 
-    /**
-     * 提交点赞/踩反馈（异步，通过 MQ 持久化）
-     */
-    @PostMapping("/conversations/messages/{messageId}/feedback")
-    public Result<Void> submitFeedback(@PathVariable String messageId,
-                                       @RequestBody MessageFeedbackRequest request) {
-        feedbackService.submitFeedbackAsync(messageId, request);
-        return Results.success();
+    @Override
+    public void consume(MessageWrapper<MessageFeedbackEvent> message) {
+        MessageFeedbackEvent event = message.getBody();
+        log.info("开始处理点赞/点踩事件，messageId: {}, userId: {}, vote: {}",
+                event.getMessageId(), event.getUserId(), event.getVote());
+        feedbackService.submitFeedbackByEvent(event);
     }
 }

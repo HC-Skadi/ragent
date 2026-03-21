@@ -28,7 +28,11 @@
       "Bash(JAVA_HOME=/Library/Java/JavaVirtualMachines/zulu-17.jdk/Contents/Home mvn clean:*)",
       "WebSearch",
       "WebFetch(domain:github.com)",
-      "Bash(gh release:*)"
+      "Bash(gh release:*)",
+      "Bash(mvn dependency:tree -pl framework)",
+      "Bash(jar tf:*)",
+      "Bash(javap:*)",
+      "Bash(mkdir:*)"
     ]
   }
 }

@@ -28,11 +28,14 @@ import com.nageoffer.ai.ragent.rag.dao.mapper.MessageFeedbackMapper;
 import com.nageoffer.ai.ragent.rag.dao.mapper.ConversationMessageMapper;
 import com.nageoffer.ai.ragent.framework.context.UserContext;
 import com.nageoffer.ai.ragent.framework.exception.ClientException;
+import com.nageoffer.ai.ragent.rag.mq.MessageFeedbackProducer;
+import com.nageoffer.ai.ragent.rag.mq.event.MessageFeedbackEvent;
 import com.nageoffer.ai.ragent.rag.service.MessageFeedbackService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.util.Collections;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -43,6 +46,28 @@ public class MessageFeedbackServiceImpl implements MessageFeedbackService {
 
     private final MessageFeedbackMapper feedbackMapper;
     private final ConversationMessageMapper conversationMessageMapper;
+    private final MessageFeedbackProducer feedbackProducer;
+
+    @Override
+    public void submitFeedbackAsync(String messageId, MessageFeedbackRequest request) {
+        String userId = UserContext.getUserId();
+        Assert.notBlank(userId, () -> new ClientException("未获取到当前登录用户"));
+        Assert.notBlank(messageId, () -> new ClientException("消息ID不能为空"));
+        Assert.notNull(request, () -> new ClientException("反馈内容不能为空"));
+        Integer vote = request.getVote();
+        Assert.notNull(vote, () -> new ClientException("反馈值不能为空"));
+        Assert.isTrue(vote == 1 || vote == -1, () -> new ClientException("反馈值必须为 1 或 -1"));
+
+        MessageFeedbackEvent event = MessageFeedbackEvent.builder()
+                .messageId(messageId)
+                .userId(userId)
+                .vote(vote)
+                .reason(request.getReason())
+                .comment(request.getComment())
+                .submitTime(System.currentTimeMillis())
+                .build();
+        feedbackProducer.sendFeedbackEvent(event);
+    }
 
     @Override
     public void submitFeedback(String messageId, MessageFeedbackRequest request) {
@@ -56,31 +81,8 @@ public class MessageFeedbackServiceImpl implements MessageFeedbackService {
         Assert.isTrue(vote == 1 || vote == -1, () -> new ClientException("反馈值必须为 1 或 -1"));
 
         ConversationMessageDO message = loadAssistantMessage(messageId, userId);
-
-        MessageFeedbackDO existing = feedbackMapper.selectOne(
-                Wrappers.lambdaQuery(MessageFeedbackDO.class)
-                        .eq(MessageFeedbackDO::getMessageId, messageId)
-                        .eq(MessageFeedbackDO::getUserId, userId)
-                        .eq(MessageFeedbackDO::getDeleted, 0)
-        );
-
-        if (existing == null) {
-            MessageFeedbackDO feedback = MessageFeedbackDO.builder()
-                    .messageId(Long.parseLong(messageId))
-                    .conversationId(message.getConversationId())
-                    .userId(userId)
-                    .vote(vote)
-                    .reason(request.getReason())
-                    .comment(request.getComment())
-                    .build();
-            feedbackMapper.insert(feedback);
-            return;
-        }
-
-        existing.setVote(vote);
-        existing.setReason(request.getReason());
-        existing.setComment(request.getComment());
-        feedbackMapper.updateById(existing);
+        doUpsertFeedback(messageId, userId, message.getConversationId(),
+                vote, request.getReason(), request.getComment(), System.currentTimeMillis());
     }
 
     @Override
@@ -115,5 +117,59 @@ public class MessageFeedbackServiceImpl implements MessageFeedbackService {
         Assert.notNull(message, () -> new ClientException("消息不存在"));
         Assert.isTrue("assistant".equalsIgnoreCase(message.getRole()), () -> new ClientException("仅支持对助手消息反馈"));
         return message;
+    }
+
+    private void doUpsertFeedback(String messageId, String userId, String conversationId,
+                                  Integer vote, String reason, String comment, long submitTime) {
+        MessageFeedbackDO existing = feedbackMapper.selectOne(
+                Wrappers.lambdaQuery(MessageFeedbackDO.class)
+                        .eq(MessageFeedbackDO::getMessageId, messageId)
+                        .eq(MessageFeedbackDO::getUserId, userId)
+                        .eq(MessageFeedbackDO::getDeleted, 0)
+        );
+
+        if (existing == null) {
+            MessageFeedbackDO feedback = MessageFeedbackDO.builder()
+                    .messageId(Long.parseLong(messageId))
+                    .conversationId(conversationId)
+                    .userId(userId)
+                    .vote(vote)
+                    .reason(reason)
+                    .comment(comment)
+                    .build();
+            feedbackMapper.insert(feedback);
+        } else {
+            // 仅当本次提交时间晚于记录最后更新时间时才覆盖，避免多节点并行消费乱序
+            feedbackMapper.update(
+                    MessageFeedbackDO.builder()
+                            .vote(vote)
+                            .reason(reason)
+                            .comment(comment)
+                            .build(),
+                    Wrappers.lambdaUpdate(MessageFeedbackDO.class)
+                            .eq(MessageFeedbackDO::getId, existing.getId())
+                            .lt(MessageFeedbackDO::getUpdateTime, new Date(submitTime))
+            );
+        }
+    }
+
+    @Override
+    public void submitFeedbackByEvent(MessageFeedbackEvent event) {
+        String messageId = event.getMessageId();
+        String userId = event.getUserId();
+        Assert.notBlank(messageId, () -> new ClientException("消息ID不能为空"));
+        Assert.notBlank(userId, () -> new ClientException("用户ID不能为空"));
+        Assert.notNull(event.getVote(), () -> new ClientException("反馈值不能为空"));
+
+        ConversationMessageDO message = loadAssistantMessage(messageId, userId);
+        doUpsertFeedback(
+                messageId,
+                userId,
+                message.getConversationId(),
+                event.getVote(),
+                event.getReason(),
+                event.getComment(),
+                event.getSubmitTime())
+        ;
     }
 }
