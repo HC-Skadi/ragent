@@ -20,6 +20,7 @@ package com.nageoffer.ai.ragent.rag.service.impl;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.nageoffer.ai.ragent.rag.controller.request.RagTraceRunPageRequest;
 import com.nageoffer.ai.ragent.rag.controller.vo.RagTraceDetailVO;
@@ -71,7 +72,7 @@ public class RagTraceQueryServiceImpl implements RagTraceQueryService {
             wrapper.eq(RagTraceRunDO::getStatus, request.getStatus());
         }
 
-        IPage<RagTraceRunDO> pageResult = runMapper.selectPage(request, wrapper);
+        IPage<RagTraceRunDO> pageResult = runMapper.selectPage((Page<RagTraceRunDO>) request, wrapper);
         Map<String, String> usernameMap = loadUsernameMap(pageResult.getRecords());
         return pageResult.convert(run -> toRunVO(run, usernameMap));
     }
