@@ -44,6 +44,21 @@ public enum ModelProvider {
     SILICON_FLOW("siliconflow"),
 
     /**
+     * 秘多元（minimax）AI 模型服务
+     */
+    MINIMAX("minimax"),
+
+    /**
+     * DeepSeek AI 模型服务
+     */
+    DEEPSEEK("deepseek"),
+
+    /**
+     * Anthropic 协议格式 AI 模型服务
+     */
+    ANTHROPIC("anthropic"),
+
+    /**
      * 空实现，用于测试或占位
      */
     NOOP("noop");
